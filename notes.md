@@ -110,3 +110,40 @@ Steps:
 3. Write/Read to/from buffer.
 4. Close using `close()`
 
+# Chapter 4: Request-Response Protocol
+The previous chapter only processed a single request for each connection. We can make the server processes multiple requests in a single connection with a loop.
+
+How does the server know how many bytes to read from the byte stream? That is the primary function of an application protocol. It has 2 levels of structure:
+- A high level structure to split the byte stream into messages.
+- Parse the structure inside each message a.k.a deserialization.
+
+We use a simple binary protocol for demonstration (not the real redis protocol). We have 4-byte little endian integer indicating the length of the payload followed by the variable length payload.
+
+## Parse the protocol
+- `read`/`write` return the number of bytes read/
+written.
+- The return value is `-1` on error.
+- `read` also returns `0` after `EOF` (or connection).
+
+We cannot rely on the `read`/`write` method directly to perform our operations since `read`/`write` can return ***less than the requested number of bytes even under normal conditions (no `EOF`, no error)***
+
+Why? Because `read`/`write` are common API for operations on both disk/network. The problem arises due to ***push-based IO*** and ***pull-based IO***. While reading from a disk, the OS already knows the length of the data that's going to be read i.e. it's a pull-based IO - We're *pulling* data that's already on the disk. So unless there's a signal interrupt, we are guaranteed to read the entire chunk/bytes requested. But in network, we'll have a peer that's *pushing* data to the socket. When the peer pushes data, it's written to a buffer and the task of transfering it over the network is deferred to the OS. It may happen that we receive the header that says the payload length is 100 bytes, but the peer has only yet managed to push say 20 bytes. That's why we need to read in a loop to completely read the data that's being pushed.
+
+As for `write`, as discussed before, `write` just appends data to the kernel-side buffer - The actual network transfer is deferred to the OS. When the buffer becomes full, the caller must wait for the buffer to drain before copying the remaining data. Now during this wait, the syscall may be interrupted by a signal, causing `write` to return with partially written data. That's why we need to `write` in a loop.
+
+### ERRNO gotchas
+`errno` hold the last error code of a syscall. If `read`/`write` succeed, it won't hold it's success code. It'll have value of the last failed syscall on the system. Hence, `errno` is always set to `0` before making a syscall.
+
+Now, during `read`, it must wait if the buffer is empty. If `read` is interrupted by a signal during this wait, it'll return back with `0`, but the exit code will be `-1` (instead of 0) and `errno` will be `EINTR`. But this is not an error. The `read` just returned back with `0` read bytes because of the interrupt. But a poorly coded implementation of `read_full` may treat this as err and return.
+
+*The course leaves this as an exercise for the user to handle this case on their own.*
+
+### A little about C things
+- In both `write_all`/`read_full`, the `buf` pointer is `+=` with `rv`. What is essentially does is since we're first reading the 4 bytes at the start, in case we are not able to completely read the 4 bytes (due to conditions discussed above), we'll need to *seek* the pointer till the point where we've actually finished reading and then resume reading from there.
+
+- Why do we read/write from buf[4] later? Since it's a pointer, isn't it already where we need it to be? **No**. Because in the `read_full`/`write_all` methods, it passed as a paramter and is now local to the method itself.
+
+- When would the above case happen that the pointer is shifted globally? If a pointer to the pointer is passed to the method, it'll retain its changed values. (using double asterisk - **).
+
+- `sizeof` gives the total size in bytes.
+- `strlen` gives the total length in count of chars.
