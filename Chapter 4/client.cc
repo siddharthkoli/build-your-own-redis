@@ -123,21 +123,6 @@ int main() {
         query_num++;
     }
 
-    int err = query(fd, "msg_buf1");
-    if (err) {
-        return err;
-    }
-
-    err = query(fd, "msg_buf2");
-    if (err) {
-        return err;
-    }
-
-    err = query(fd, "msg_buf3");
-    if (err) {
-        return err;
-    }
-
     close(fd);
     return 0;
 }
