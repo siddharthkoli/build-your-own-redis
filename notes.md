@@ -147,3 +147,71 @@ Now, during `read`, it must wait if the buffer is empty. If `read` is interrupte
 
 - `sizeof` gives the total size in bytes.
 - `strlen` gives the total length in count of chars.
+
+# Chapter 5: Concurrent IO Models
+## Thread based concurrency
+The client can hold a connection for as long as it wants, and the connection can be used for any number of request-response pairs. So that makes the server locked to handle a single connection only. This can be resolved by multithreading where we create a separate thread to handle each new connection.
+
+### Why threads fail?
+Though valid, threads have 2 drawbacks:
+1. Memory: Many threads many stacks, increasing memory usage since there's no control on how much memory it can use.
+2. Overhead: In stateless apps like PHP which creates many short-lived connections, it adds to the overhead of latency and CPU usage.
+
+Forking new processes is older, and much worse.
+
+## Event based concurrency
+Concurrent IO is possible without threads. In Linux TCP stack handles sending and receiving packets by placing the packets in per-socket kernel side buffer. Consider `read` syscall. All it does it copy data from kernel side buffer, and when the buffer is empty, it suspends the `read` thread until more data is ready.
+
+Same for `write`, it merely copies data to the kernel-side buffer and when it's full, it suspends the `write` thread until the buffer is empty.
+
+So the need for multithreading arises due to need to wait for each socket to be ready (to read or write). If there was a way to wait for multiple sockets simultaneously, and then `read`/`write` whichever is ready, we could do it in a single thread.
+
+This involves 3 operating system mechanisms:
+
+Readiness notification: 
+1. Wait for multiple sockets, return when one or more are ready. “Ready” means the read buffer is not empty or the write buffer is not full.
+2. Non-blocking read: Assuming the read buffer is not empty, consume from it.
+3. Non-blocking write: Assuming the write buffer is not full, put some data into it.
+
+## Blocking and Non-blocking IO
+If the read buffer is not empty, both blocking and non-blocking reads will return the data immediately.
+
+If the buffer *is* empty, the non-blocking read will return with `errno = EAGAIN`, while a blocking read will block and wait for more data. Non-blocking read can be called repeatedly to fully drain the buffer.
+
+If the write buffer is empty, both blocking and non-blocking writes will immediately write data to the buffer and return.
+
+If it is *not* empty, the non-blocking will return with `errno = EGAIN` while the blocking write will wait for more room. Non-blocking writes can be called repeatedly to fully fill the write buffer. If the data is larger than the available write buffer, a non-blocking write will do a partial write, while a blocking write may block.
+
+sockets can also be put in non-blocking mode using the `O_NONBLOCK` flag set using the `fcntl()` syscall.
+
+```c++
+static void fd_set_nonblock(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);  // get the flags
+    flags |= O_NONBLOCK;                // modify the flags
+    fcntl(fd, F_SETFL, flags);          // set the flags
+}
+```
+
+## Readiness API
+We use the simplest `poll` to wait for readiness on Linux. It takes in an array of socket fds, and some other flags to indicate whether we want to read (`POLLIN`) or write (`POLLOUT`) or both (`POLLIN | POLLOUT`).
+
+There are other APIs too:
+- `select()`: similar to `poll` and works on both Windows and Linux. But only allows for 1024 fds, so should not be used.
+- `epoll_wait()`: Only works on Linux. Unlike poll(), the fd list is not passed as an argument, but stored in the kernel. epoll_ctl() is used to add or modify the fd list. It’s more scalable than poll() because passing a huge number of fds is inefficient.
+
+## Readiness API for files
+Readiness API cannot be used for files. In case of sockets, for eg during `read`, the data is present in the kernel side buffer. The read is guaranteed to return back data.
+
+In case of files, no such buffer exists on the kernel side so the readiness for a file is undefined. These APIs will always report a disk file as ready, but the IO will block. So file IO must be done outside the event loop, in a thread pool, which we’ll learn later.
+
+On Linux, file IO within an event loop may be possible with io_uring, which is a unified interface for both file IO and socket IO. But io_uring is a very different API, so we will not pursue it.
+
+## Summary of concurrent IO techniques
+|Type|Method|API|Scalability|
+|----|------|----|-----------|
+|Socket|Thread per connection|`pthread`|Low|
+|Socket|Process per connection|`fork()`|Low|
+|Socket|Event loop|`poll()`, `epoll`|High|
+|File|Thread pool|`pthread`||
+|Any|Event loop|`io_uring`|High|
+
