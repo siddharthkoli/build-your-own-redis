@@ -350,3 +350,33 @@ With pipelining, the client is sending several reqs. We can't be sure that when 
 
 **Note: Souce code for both 6.1 and 6.2 is same. So only 6.1 is saved**
 
+# Chapter 7: Key Value Server
+We'll add a basic KV store to the server and update the protocol to support it.
+
+We'll use the following:
+
+```c++
+┌────┬───┬────┬───┬────┬───┬───┬────┐
+│nstr│len│str1│len│str2│...│len│strn│
+└────┴───┴────┴───┴────┴───┴───┴────┘
+  4B   4B ...   4B ...
+
+```
+
+`nstr` is the number of items in the req.
+Then each item is again `len` followed by `payload`.
+
+The repsonse is just a simple status code and a string.
+```c++
+┌────────┬─────────┐
+│ status │ data... │
+└────────┴─────────┘
+    4B     ...
+```
+
+## How to handle a request:
+1. Parse the command
+2. Process the command and generate the resp
+3. Append the resp to the outgoing buffer.
+
+We use a toy `map` from STL.
