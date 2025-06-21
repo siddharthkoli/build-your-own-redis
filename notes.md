@@ -311,3 +311,42 @@ We could've also used `buf.push_back()` but the function defined uses `insert` i
 
 Similar case in point for `buf_consume`.
 
+# Chapter 6.2
+A typical redis server can handle anywhere between 20K~200K requests/second for simiple ops like get, set, del. This number is limited by the number of IO ops a single thread can handle.
+
+Since we're bound by how much work is done per IO call for our reqs/sec, it's desirable to do as much work as possible in each IO call. Hence we can batch IO reqs together (process multiple reqs/read).
+
+This can be achieved using *pipelining*. Normally a server sends 1 req and receives 1 response. In pipelining, the client sends n reqs and receives n responses. The server still processes all the reqs in order, the only diff is that instead of reading 1 req in a single IO op, it now reads several reqs in the same single IO op, effectively reducing the no. of IO ops.
+
+## Problem with pipelining
+We cannot just let the server read a single req, process and send 1 resp because when the client sends several reqs, the server will read 1 req, send 1 response, and then wait for more reqs. This makes the pipeline get stuck.
+
+The solution is instead of reading a single request, we keep reading from the input buffer until there is nothing left to do.
+```c++
+static void handle_read(Conn *conn) {
+    // ...
+    // try_one_request(conn);               // WRONG
+    while (try_one_request(conn)) {}        // CORRECT
+    // ...
+}
+```
+
+And after we've processed 1 req, we cannot just empty the input buffer because there could be more reqs in the buffer i.e. we when waiting for n bytes to come, we cannot assume that *at most n bytes* have come. More bytes could've come due to several reqs.
+```c++
+static bool try_one_request(Conn *conn) {
+    // ...
+    // conn->incoming.clear()               // WRONG
+    buf_consume(conn->incoming, 4 + len);   // CORRECT
+    return true;
+}
+```
+
+### Optimistic non-blocking writes
+In normal req-resp, the client sends 1 req and waits for 1 resp. Normally, when the client sends a req, it has very likely consumed (or read) the previous response. So the write buffer is very likely empty.
+
+So it's safe to assume from the server side that we can immediately write to the outgoing buffer (send a response) without `poll()`ing to see if the client is ready to read our response. (the `poll()` is most likely to succeed.) So we can save 1 syscall.
+
+With pipelining, the client is sending several reqs. We can't be sure that when we're sending a response, the client is ready to read. Why? Because the client may be busy still sending reqs. So the above assumption here is `false`. We will get `EAGAIN` indicating that the requested resource is not available and we should retry.
+
+**Note: Souce code for both 6.1 and 6.2 is same. So only 6.1 is saved**
+
