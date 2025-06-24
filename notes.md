@@ -380,3 +380,52 @@ The repsonse is just a simple status code and a string.
 3. Append the resp to the outgoing buffer.
 
 We use a toy `map` from STL.
+
+# Chapter 8.1 Hashtables
+2 classes of data structures for KV store:
+1. sorting based structures such as AVL tree, Trie, Treap, B-tree.
+2. 2 types of hashtables: open addressing and chaining.
+
+Sorting structures maintain order and use comparisons to narrow down their search having a time complexity of `O(log N)`.
+
+Hashtables rely on uniformly distrubuted hash values and have a `O(1)` time complexity.
+
+If we have unique integer keys, we can use an array to store the values like the `fd2Conn` structure used previously.
+```c++
+std::vector<Conn *> fd2conn;
+```
+
+If keys are not unique, then we can use nested structures:
+```c++
+std::vector<std::vector<T>> n;
+```
+
+Now if the keys are non-integers, we can reduce these arbitrary types to integer types using a hash function. We use these values obtained from the hash function to key the array.
+
+Multiple non-integer values may hash to the same integer value -> this is called a collision. But for array-of-arrays type, we can just store both the key and value to distinguish between different keys.
+```c++
+std::vector<std::vector<pair<K, T>>> ,;
+m.resize(N);
+m[hash(key) % N].push_back(std::pair{key, val}); // insert
+
+
+for (auto& [k, v]: m[hash(key) % N]) { // lookup
+    if (k == key) { /* found */ }
+}
+```
+This is a ***chaining*** type of hashtable, since we're chaining keys that hash to the same integer. The collection doesn't have to be arrays, array-of-linked-list is the most common one.
+```c++
+std::vector<std::vector<pair<K, V>>> m; // array of arrays
+std::vector<std::list<pair<K, V>>> m; // array of linked list
+```
+
+***Open addressing***: Doesn't use nested collection - instead stores KV pairs directly into the array. In case of collision, it finds another slot and uses it if it's empty else it keeps on probling until it finds an empty slot.
+
+## Why are hashtables `O(1)` on avg?
+### Load factor
+Let's say the hashtable has N slots and N slots can store k * N keys. Then every slot on avg stores k keys. This ratio is called ***`load_factor = keys/slots`***
+
+Hashtables are `O(1)` on avg because there is a limit to the number of keys relative to the number of slots. When the maximum load_factor is reached, keys are migrated to a larger hashtable (this is called rehashing). This can be triggered by insertion. Like dynamic arrays, the new hashtable is exponentially larger, so the amortized insertion cost is still `O(1)`.
+
+### What is amortized?
+Essentially measure of values spread over time/operations. In this context, insertion is `O(1)`, but rehashing is `O(N)`. But measured over multiple insert operations, the avg complexity over all these operations still turns out to be `O(1)`.
