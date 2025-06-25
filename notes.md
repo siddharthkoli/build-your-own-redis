@@ -429,3 +429,45 @@ Hashtables are `O(1)` on avg because there is a limit to the number of keys rela
 
 ### What is amortized?
 Essentially measure of values spread over time/operations. In this context, insertion is `O(1)`, but rehashing is `O(N)`. But measured over multiple insert operations, the avg complexity over all these operations still turns out to be `O(1)`.
+
+## Why not use `STL` hashtables?
+If we use `std::unordered_map` from STL over the network, there will be issues when it is deployed at scale.
+
+There are 2 issues that arise when scale is involved:
+1. Throughput
+2. Latency
+
+Throughput issues have generic, easy solutions such as sharding and read-only replicas. But latency issues are much harder to solve and are mostly domain specific.
+
+The largest latency issue with hashtables comes from insertion, which may trigger an `O(N)` resize. A modern machine may easily have hundreds of GB of memory, but resizing a hashtable of this size will take a long time, rendering the service unavailable.
+
+### Side note: what is throughput?
+***Throughput*** is the total data passing through a measure at any point in time.
+
+***Bandwidth*** is the max throughput that can be achieved in ideal conditions.
+
+So: *Throughput <= Bandwidth*
+
+and, *Throughput = Bandwidth * Efficiency*
+
+## How to resolve this *resize* latency issue?
+Resize the hashtable progressively. After allocating the new hashtable, don't move all the keys at once, only move a fixed number of keys. Then each time the hashtable is used, move some more keys. This can slow down lookups since we now have to query 2 hashtables.
+
+Trick: After allocating a new hashtable, the values must be initialized (or zeroed out). So merely *triggering* a resize will seem to be `O(N)` time. But this can be avoided by also initializing the slots progressively. This can be done using `calloc()` instead of `malloc()`.
+
+When we use `malloc()` it gives us memory from the heap which must be zeroed out (or initialized) since it may contain garbage data. But when we use `calloc()`, it gives just a virtual memory address for the application to use because `calloc()` will call `mmap()` to get it's memory. No real physical memory in the RAM has yet been allocated to that virtual address. Essentially, `mmap()` will give us pages that will then be zeroed out on first access, which effectively makes it a progressively zero-initialized array.
+
+When `calloc()` is used for large memory allocations, it'll internally call `mmap()` to give virtual pages which will be initialized upon first access. This gives us a fast, `O(1)` response.
+
+When `calloc()` is used for small memory allocations, it'll pull the memory directly from heap. This memory needs to be zeroed-out, which is a bit slower, but this latency is still bounded.
+
+How do we know the threshold for what is small and large memory allocation? This is determined by the libc implementation.
+
+## How to resolve the *chaining* latency issue?
+Chaining hashtables results in the possiblity that a very long chain of collisions will exist. But even with this, chaining hashtables are still less prone to collisions as compared to open addressing because they still use the same slot when colliding. In open addressing, colliding keys will take multiple slots, which further increases the possibility of collisions.
+
+We use *chaining hashtable with linked list* because:
+1. Latency: Insertion and deletion are both `O(1)`.
+2. Reference Stability: Pointers to data remain valid even after resizing.
+3. Can be implemented as an intrusive data structure.
+
