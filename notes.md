@@ -1,3 +1,6 @@
+# How to compile:
+Use `g++-14 -Wall -Wextra -g -O2 server.cc -o server.out`
+
 # Chapter 2: Socket Programming
 ## TCP
 tcp -> stream of bytes
